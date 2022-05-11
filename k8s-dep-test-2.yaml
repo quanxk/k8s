@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sftp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-deployment
+  template:
+    metadata:
+      labels:
+        app: sftp
+    spec:
+      terminationGracePeriodSeconds: 60 # pod停止时的优雅退出时间
+      initContainers:
+      - image: harbor.k8s/test/initHello:alpine
+        name: initHello
+        command: ["cp", "-r", "/workspace", "/workdir"]
+        volumeMounts:
+        - name: workspace
+          mountPath: /workdir
+      containers:
+      - image: harbor.k8s/test/hello:alpine
+        command: ["/entrypoint", "$(user):$(passwd):::$(path)"] #command中引用环境变量
+        name: hello
+        env:
+        - name: TZ
+          value: "CST-8"
+        - name: user
+          valueFrom: # 用于引用secret、configMap、metadata等的key
+            secretKeyRef:
+              name: my-secret
+              key: user
+        - name: passwd
+          valueFrom:
+            secretKeyRef:
+              name: my-secret
+              key: passwd
+        - name: path
+          value: "file"
+        readinessProbe: # 就绪探针
+          exec:
+            command: ["sh", "/root/webapp/bin/readiness.sh"]
+          initialDelaySeconds: 20
+        livenessProbe: # 存活探针
+          tcpSocket:
+            port: 8081
+          httpGet:
+            port: 8080
+            path: /heath
+          initialDelaySeconds: 20
+        lifecycle: # 生命周期
+          preStop:
+            exec:
+              command: ["sh", "/root/webapp/bin/shutdown.sh"]
+        resources:
+          limits:
+            cpu: "1"
+            memory: 200Mi
+          requests:
+            cpu: "0.5"
+            memory: 100Mi
+        volumeMounts:
+        - name: workspace
+          mountPath: /root/webapp/workspace
+        - name: data
+          mountPath: /home/data
+        - name: server
+          mountPath: /home/readme.md #挂载在容器中的路径
+          subPath: readme.txt #存储卷中的路径，此处是configMap中的readme.txt
+        - name: server
+          mountPath: /home/server.xml
+          subPath: server.xml #存储卷中的路径，此处是configMap中的server.xml
+      volumes:
+      - name: workspace
+        emptyDir: {} # pod生命周期中的临时目录
+      - name: data
+        persistentVolumeClaim:
+          claimName: my-pvc
+      - name: server
+        configMap:
+          name: my-configmap
